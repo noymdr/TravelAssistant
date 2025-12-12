@@ -4,18 +4,32 @@ Retrieves information from local documents first, then enriches with LLM knowled
 """
 
 import os
+import io
 from typing import List, Dict, Optional
 from pathlib import Path
 import faiss
 import numpy as np
+import pypdf
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+# OCR imports
+try:
+    import fitz  # PyMuPDF
+    import easyocr
+    import numpy as np
+    from PIL import Image
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    print("Warning: OCR libraries not installed. Image-based PDFs will not be processed.")
+    print("Install with: pip install PyMuPDF easyocr")
 try:
     from langchain_ollama import OllamaLLM
 except ImportError:
     from langchain_ollama import Ollama as OllamaLLM
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from langchain_core.prompts import PromptTemplate
 
@@ -76,6 +90,82 @@ class TravelRAGSystem:
         # Load or create vector store
         self._load_or_create_vector_store()
     
+    def _pdf_has_text(self, pdf_path: str) -> bool:
+        """Check if PDF has extractable text."""
+        try:
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = pypdf.PdfReader(file)
+                for page in pdf_reader.pages:
+                    text = page.extract_text()
+                    if text and text.strip():
+                        return True
+            return False
+        except Exception:
+            return False
+    
+    def _extract_text_from_image_pdf(self, pdf_path: str) -> List[Document]:
+        """Extract text from image-based PDF using OCR with PyMuPDF and EasyOCR."""
+        if not OCR_AVAILABLE:
+            raise ImportError("OCR libraries not available. Install PyMuPDF and easyocr.")
+        
+        documents = []
+        try:
+            # Open PDF with PyMuPDF
+            pdf_document = fitz.open(pdf_path)
+            total_pages = len(pdf_document)
+            
+            # Initialize EasyOCR reader (only once for efficiency)
+            print(f"  Initializing EasyOCR reader (this may take a moment on first use)...")
+            reader = easyocr.Reader(['en'], gpu=False)  # Use GPU if available, otherwise CPU
+            
+            # Process each page
+            for page_num in range(total_pages):
+                print(f"  Processing page {page_num + 1}/{total_pages} with OCR...")
+                page = pdf_document[page_num]
+                
+                # Convert PDF page to image (pixmap)
+                # Use high DPI for better OCR accuracy
+                mat = fitz.Matrix(2.0, 2.0)  # 2x zoom = 144 DPI
+                pix = page.get_pixmap(matrix=mat)
+                
+                # Convert pixmap to PIL Image
+                img_data = pix.tobytes("png")
+                image = Image.open(io.BytesIO(img_data))
+                
+                # Convert PIL Image to numpy array for EasyOCR
+                img_array = np.array(image)
+                
+                # Extract text using EasyOCR
+                results = reader.readtext(img_array)
+                
+                # Combine all detected text
+                text_parts = []
+                for (bbox, text, confidence) in results:
+                    if confidence > 0.5:  # Filter low-confidence detections
+                        text_parts.append(text)
+                
+                text = ' '.join(text_parts)
+                
+                if text and text.strip():
+                    doc = Document(
+                        page_content=text.strip(),
+                        metadata={
+                            'source_file': Path(pdf_path).name,
+                            'file_type': 'pdf',
+                            'page': page_num + 1,
+                            'extraction_method': 'ocr'
+                        }
+                    )
+                    documents.append(doc)
+                else:
+                    print(f"  Warning: No text extracted from page {page_num + 1}")
+            
+            pdf_document.close()
+            return documents
+        except Exception as e:
+            print(f"  Error during OCR extraction: {e}")
+            raise
+    
     def _load_documents(self) -> List[Document]:
         """Load all documents from the documents directory."""
         documents = []
@@ -94,16 +184,43 @@ class TravelRAGSystem:
         # Load PDF files
         for pdf_file in pdf_files:
             try:
-                loader = PyPDFLoader(str(pdf_file))
-                docs = loader.load()
-                # Add metadata about source file
-                for doc in docs:
-                    doc.metadata['source_file'] = pdf_file.name
-                    doc.metadata['file_type'] = 'pdf'
-                documents.extend(docs)
-                print(f"Loaded {len(docs)} pages from {pdf_file.name}")
+                pdf_path = str(pdf_file)
+                
+                # Check if PDF has extractable text
+                if self._pdf_has_text(pdf_path):
+                    # Try standard text extraction
+                    loader = PyPDFLoader(pdf_path)
+                    docs = loader.load()
+                    # Add metadata about source file
+                    for doc in docs:
+                        doc.metadata['source_file'] = pdf_file.name
+                        doc.metadata['file_type'] = 'pdf'
+                        doc.metadata['extraction_method'] = 'text'
+                    documents.extend(docs)
+                    print(f"Loaded {len(docs)} pages from {pdf_file.name} (text extraction)")
+                else:
+                    # PDF appears to be image-based, use OCR
+                    if OCR_AVAILABLE:
+                        print(f"PDF {pdf_file.name} appears to be image-based, using OCR...")
+                        docs = self._extract_text_from_image_pdf(pdf_path)
+                        documents.extend(docs)
+                        print(f"Loaded {len(docs)} pages from {pdf_file.name} (OCR extraction)")
+                    else:
+                        print(f"Warning: {pdf_file.name} appears to be image-based but OCR is not available.")
+                        print(f"  Install OCR dependencies: pip install PyMuPDF easyocr")
             except Exception as e:
                 print(f"Error loading {pdf_file}: {e}")
+                # If text extraction fails, try OCR as fallback
+                if OCR_AVAILABLE:
+                    try:
+                        print(f"  Attempting OCR as fallback...")
+                        docs = self._extract_text_from_image_pdf(str(pdf_file))
+                        documents.extend(docs)
+                        print(f"  Successfully loaded {len(docs)} pages using OCR")
+                    except Exception as ocr_error:
+                        print(f"  OCR fallback also failed: {ocr_error}")
+                else:
+                    print(f"  OCR not available. Install with: pip install PyMuPDF easyocr")
         
         # Load text files
         for txt_file in txt_files:
@@ -139,7 +256,10 @@ class TravelRAGSystem:
         split_docs = self._split_documents(documents)
         self.documents = split_docs
         
-        print(f"Creating vector store with {len(split_docs)} chunks...")
+        # Count unique source files
+        unique_files = set(doc.metadata.get('source_file', 'unknown') for doc in split_docs)
+        
+        print(f"Creating vector store with {len(split_docs)} chunks from {len(unique_files)} source file(s)...")
         texts = [doc.page_content for doc in split_docs]
         
         # Generate embeddings
@@ -156,7 +276,7 @@ class TravelRAGSystem:
         
         # Save vector store and documents
         self._save_vector_store()
-        print(f"Vector store created with {len(split_docs)} documents")
+        print(f"Vector store created: {len(split_docs)} chunks from {len(unique_files)} source file(s)")
     
     def _save_vector_store(self):
         """Save vector store and documents metadata."""
@@ -190,7 +310,9 @@ class TravelRAGSystem:
             with open(documents_path, "rb") as f:
                 self.documents = pickle.load(f)
             
-            print(f"Loaded {len(self.documents)} documents from vector store")
+            # Count unique source files
+            unique_files = set(doc.metadata.get('source_file', 'unknown') for doc in self.documents)
+            print(f"Loaded vector store: {len(self.documents)} chunks from {len(unique_files)} source file(s)")
             return True
         except Exception as e:
             print(f"Error loading vector store: {e}")
@@ -367,6 +489,29 @@ Answer based only on the information in the context:
             self._create_vector_store(documents)
         else:
             print("No documents found to index.")
+    
+    def get_statistics(self) -> Dict:
+        """Get statistics about the vector store."""
+        if not self.documents:
+            return {
+                "total_chunks": 0,
+                "total_source_files": 0,
+                "source_files": [],
+                "chunks_per_file": {}
+            }
+        
+        # Count chunks per source file
+        chunks_per_file = {}
+        for doc in self.documents:
+            source_file = doc.metadata.get('source_file', 'unknown')
+            chunks_per_file[source_file] = chunks_per_file.get(source_file, 0) + 1
+        
+        return {
+            "total_chunks": len(self.documents),
+            "total_source_files": len(chunks_per_file),
+            "source_files": list(chunks_per_file.keys()),
+            "chunks_per_file": chunks_per_file
+        }
 
 
 def main():

@@ -9,6 +9,7 @@ A Retrieval-Augmented Generation (RAG) system for querying travel documents (fli
 - **Fully Local**: Uses Hugging Face embeddings and Ollama (Gemma 2) for complete privacy
 - **FAISS Vector Store**: Fast and efficient local vector storage
 - **Multiple Document Types**: Supports PDF and text files
+- **OCR Support**: Automatically extracts text from image-based/scanned PDFs using OCR
 
 ## Requirements
 
@@ -36,6 +37,13 @@ A Retrieval-Augmented Generation (RAG) system for querying travel documents (fli
    ```bash
    pip install -r requirements.txt
    ```
+
+   **Note for OCR (Image-based PDFs):**
+   - The system supports OCR for image-based/scanned PDFs using Python-only libraries
+   - Uses PyMuPDF (fitz) to extract images from PDFs and EasyOCR for text recognition
+   - No external software installation required - all dependencies are Python packages
+   - The Python packages (PyMuPDF, easyocr) are already in requirements.txt
+   - Note: EasyOCR will download model files on first use (~500MB), which may take a few minutes
 
 3. **Install and setup Ollama:**
    - Download Ollama from https://ollama.ai
