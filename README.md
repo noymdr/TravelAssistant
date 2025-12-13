@@ -2,6 +2,11 @@
 
 A Retrieval-Augmented Generation (RAG) system for querying travel documents (flight tickets, insurance details, hotel information) using local models and vector storage.
 
+
+## Team Members
+- **Noy M.**
+- **Idan F.**
+
 ## Features
 
 - **Source-First Retrieval**: Prioritizes information from your provided documents
@@ -103,10 +108,15 @@ python example_usage.py
 
 ## How It Works
 
+<img width="1670" height="242" alt="image" src="https://github.com/user-attachments/assets/781bbab9-ed4e-483e-a1ed-b1cad27e9217" />
+
 1. **Document Loading**: The system loads all PDF and text files from the `documents` directory
 2. **Chunking**: Documents are split into smaller chunks for better retrieval
 3. **Embedding**: Each chunk is converted to a vector using Hugging Face embeddings
 4. **Vector Store**: FAISS stores all document embeddings for fast similarity search
+
+<img width="903" height="976" alt="image" src="https://github.com/user-attachments/assets/872f815a-5baa-40e6-9a85-d0df6090ceef" />
+
 5. **Query Processing**:
    - Retrieves relevant document chunks based on query similarity
    - Checks if the answer can be found in the retrieved documents
@@ -136,7 +146,7 @@ You can customize the system by modifying the initialization parameters:
 - `vector_store_path`: Where to save/load the vector store
 - `embedding_model`: Hugging Face embedding model (default: `all-MiniLM-L6-v2`)
 - `ollama_base_url`: Ollama API URL (default: `http://localhost:11434`)
-- `llm_model`: Ollama model name (default: `llama3`)
+- `llm_model`: Ollama model name (default: `gemma2`)
 
 ## Rebuilding the Index
 
@@ -155,7 +165,7 @@ rag.rebuild_index()
 
 2. **Model not found**: Pull the required model:
    ```bash
-   ollama pull llama3
+   ollama pull gemma2
    ```
 
 3. **No documents found**: Ensure your documents are in the `documents` folder and are PDF or TXT files
