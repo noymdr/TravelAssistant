@@ -43,7 +43,9 @@ class TravelRAGSystem:
         vector_store_path: str = "vector_store",
         embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
         ollama_base_url: str = "http://localhost:11434",
-        llm_model: str = "gemma2"
+        llm_model: str = "gemma2",
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200
     ):
         """
         Initialize the RAG system.
@@ -55,6 +57,8 @@ class TravelRAGSystem:
             ollama_base_url: URL for Ollama API
             llm_model: Ollama model name (e.g., "gemma2")
         """
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
         self.documents_dir = Path(documents_dir)
         self.vector_store_path = Path(vector_store_path)
         self.vector_store_path.mkdir(exist_ok=True)
@@ -73,13 +77,13 @@ class TravelRAGSystem:
             self.llm = OllamaLLM(
                 base_url=ollama_base_url,
                 model=llm_model,
-                temperature=0.1
+                temperature=0.3
             )
         except TypeError:
             # Fallback to older API style
             self.llm = OllamaLLM(
                 model=llm_model,
-                temperature=0.1
+                temperature=0.3
             )
         
         # Initialize vector store
@@ -240,8 +244,8 @@ class TravelRAGSystem:
     def _split_documents(self, documents: List[Document]) -> List[Document]:
         """Split documents into smaller chunks."""
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
             length_function=len,
         )
         return text_splitter.split_documents(documents)
@@ -391,7 +395,18 @@ Answer with only "YES" if the question can be answered from the context, or "NO"
         if not retrieved_docs:
             if use_enrichment:
                 print("No documents found. Using LLM knowledge base...")
-                answer = self.llm.invoke(question)
+                # Use a prompt that explicitly tells the LLM to use its knowledge
+                knowledge_prompt = PromptTemplate(
+                    input_variables=["question"],
+                    template="""You are a helpful travel assistant. Answer the following question using your own knowledge base. Do NOT suggest searching the web or looking elsewhere - provide a direct answer from your knowledge.
+
+Question: {question}
+
+Answer:
+"""
+                )
+                chain = knowledge_prompt | self.llm
+                answer = chain.invoke({"question": question})
                 # Convert to string if needed (handles AIMessage objects)
                 answer = str(answer) if not isinstance(answer, str) else answer
                 return {
@@ -436,14 +451,20 @@ Answer based only on the information in the context:
             if use_enrichment:
                 prompt_template = PromptTemplate(
                     input_variables=["context", "question"],
-                    template="""You are a helpful travel assistant. Answer the question using information from the travel documents when available, and supplement with your knowledge when needed.
+                    template="""You are a helpful travel assistant. Answer the question using information from the travel documents when available, and use your own knowledge base when the information is not in the documents.
 
 Context from travel documents:
 {context}
 
 Question: {question}
 
-Answer the question. Use information from the documents when available, and supplement with your knowledge when the information is not in the documents:
+Instructions:
+- If the answer is in the context above, use that information
+- If the answer is NOT in the context, use your own knowledge to provide a helpful answer
+- Do NOT suggest searching the web or looking elsewhere - provide the answer directly from your knowledge
+- Be helpful and informative
+
+Answer:
 """
                 )
             else:

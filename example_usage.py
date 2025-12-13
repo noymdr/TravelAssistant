@@ -39,10 +39,10 @@ def main():
         print(f"Answer: {result['answer']}")
         print("-"*60)
         
-        if result['sources']:
-            print(f"\nRetrieved from {len(result['sources'])} source(s):")
-            for i, source in enumerate(result['sources'], 1):
-                print(f"  {i}. {source['file']} ({source['file_type']})")
+        # if result['sources']:
+        #     print(f"\nRetrieved from {len(result['sources'])} source(s):")
+        #     for i, source in enumerate(result['sources'], 1):
+        #         print(f"  {i}. {source['file']} ({source['file_type']})")
         
         if result['source_based']:
             print("\n✓ Answer based on your documents")
